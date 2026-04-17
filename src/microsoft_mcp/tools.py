@@ -455,7 +455,7 @@ def move_email(
 
 @mcp.tool
 def reply_to_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
-    """Reply to an email (sender only)"""
+    """Reply to an email (sender only) - sends immediately"""
     endpoint = f"/me/messages/{email_id}/reply"
     payload = {"message": {"body": {"contentType": "Text", "content": body}}}
     graph.request("POST", endpoint, account_id, json=payload)
@@ -464,11 +464,104 @@ def reply_to_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
 
 @mcp.tool
 def reply_all_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
-    """Reply to all recipients of an email"""
+    """Reply to all recipients of an email - sends immediately"""
     endpoint = f"/me/messages/{email_id}/replyAll"
     payload = {"message": {"body": {"contentType": "Text", "content": body}}}
     graph.request("POST", endpoint, account_id, json=payload)
     return {"status": "sent"}
+
+
+@mcp.tool
+def create_reply_draft(
+    account_id: str,
+    email_id: str,
+    body: str,
+    reply_all: bool = False,
+) -> dict[str, Any]:
+    """Create a reply draft in the same thread (does NOT send). Review and send from Outlook.
+
+    Args:
+        account_id: The account ID
+        email_id: The email to reply to
+        body: The reply body text
+        reply_all: If True, reply to all recipients; if False, reply to sender only
+    """
+    action = "createReplyAll" if reply_all else "createReply"
+    endpoint = f"/me/messages/{email_id}/{action}"
+    result = graph.request("POST", endpoint, account_id, json={})
+    if not result:
+        raise ValueError("Failed to create reply draft")
+
+    # Update the draft body
+    draft_id = result["id"]
+    updated = graph.request(
+        "PATCH",
+        f"/me/messages/{draft_id}",
+        account_id,
+        json={"body": {"contentType": "Text", "content": body}},
+    )
+    return updated or result
+
+
+@mcp.tool
+def create_forward_draft(
+    account_id: str,
+    email_id: str,
+    to: str | list[str],
+    body: str = "",
+) -> dict[str, Any]:
+    """Create a forward draft (does NOT send). Review and send from Outlook.
+
+    Args:
+        account_id: The account ID
+        email_id: The email to forward
+        to: Recipient(s) for the forward
+        body: Optional message to add above the forwarded content
+    """
+    endpoint = f"/me/messages/{email_id}/createForward"
+    result = graph.request("POST", endpoint, account_id, json={})
+    if not result:
+        raise ValueError("Failed to create forward draft")
+
+    # Update recipients and optional body
+    draft_id = result["id"]
+    to_list = [to] if isinstance(to, str) else to
+    updates: dict[str, Any] = {
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+    }
+    if body:
+        updates["body"] = {"contentType": "Text", "content": body}
+
+    updated = graph.request(
+        "PATCH", f"/me/messages/{draft_id}", account_id, json=updates
+    )
+    return updated or result
+
+
+@mcp.tool
+def list_thread_messages(
+    account_id: str,
+    conversation_id: str,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """List all messages in an email thread by conversation ID.
+
+    Args:
+        account_id: The account ID
+        conversation_id: The conversationId from any email in the thread
+        limit: Maximum messages to return (default 25)
+    """
+    params = {
+        "$filter": f"conversationId eq '{conversation_id}'",
+        "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,isRead",
+        "$orderby": "receivedDateTime asc",
+        "$top": min(limit, 100),
+    }
+
+    messages = list(
+        graph.request_paginated("/me/messages", account_id, params=params, limit=limit)
+    )
+    return messages
 
 
 @mcp.tool
