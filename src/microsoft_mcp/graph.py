@@ -270,7 +270,9 @@ def upload_large_mail_attachment(
     session = create_mail_upload_session(message_id, attachment_item, account_id)
     upload_url = session["uploadUrl"]
 
-    headers = {"Authorization": f"Bearer {get_token(account_id)}"}
+    # Upload session URLs are pre-authenticated via authtoken query param.
+    # Sending a Graph API Bearer token causes 401 on outlook.office365.com.
+    headers = {}
     return _do_chunked_upload(upload_url, data, headers)
 
 
