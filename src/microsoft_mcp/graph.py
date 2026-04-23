@@ -30,7 +30,7 @@ def request(
             headers["Prefer"] = 'outlook.body-content-type="text"'
     else:
         headers["Content-Type"] = (
-            "application/json" if json else "application/octet-stream"
+            "application/json" if json is not None else "application/octet-stream"
         )
 
     if params and (
