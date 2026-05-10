@@ -2,8 +2,18 @@ import base64
 import datetime as dt
 import pathlib as pl
 from typing import Any
+from urllib.parse import quote
 from fastmcp import FastMCP
 from . import graph, auth
+
+
+def _encode_id(id: str) -> str:
+    """URL-encode a Graph API ID for safe use in URL path segments.
+
+    IDs returned by search/list endpoints use standard base64 which contains
+    '/' and '+' characters that break URL paths. Encode them properly.
+    """
+    return quote(id, safe="")
 
 mcp = FastMCP("microsoft-mcp")
 
@@ -183,7 +193,7 @@ def get_email(
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
 
-    result = graph.request("GET", f"/me/messages/{email_id}", account_id, params=params)
+    result = graph.request("GET", f"/me/messages/{_encode_id(email_id)}", account_id, params=params)
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
 
@@ -405,7 +415,7 @@ def update_email(
 ) -> dict[str, Any]:
     """Update email properties (isRead, categories, flag, etc.)"""
     result = graph.request(
-        "PATCH", f"/me/messages/{email_id}", account_id, json=updates
+        "PATCH", f"/me/messages/{_encode_id(email_id)}", account_id, json=updates
     )
     if not result:
         raise ValueError(f"Failed to update email {email_id} - no response")
@@ -415,7 +425,7 @@ def update_email(
 @mcp.tool
 def delete_email(email_id: str, account_id: str) -> dict[str, str]:
     """Delete an email"""
-    graph.request("DELETE", f"/me/messages/{email_id}", account_id)
+    graph.request("DELETE", f"/me/messages/{_encode_id(email_id)}", account_id)
     return {"status": "deleted"}
 
 
@@ -444,7 +454,7 @@ def move_email(
 
     payload = {"destinationId": folder_id}
     result = graph.request(
-        "POST", f"/me/messages/{email_id}/move", account_id, json=payload
+        "POST", f"/me/messages/{_encode_id(email_id)}/move", account_id, json=payload
     )
     if not result:
         raise ValueError("Failed to move email - no response from server")
@@ -456,7 +466,7 @@ def move_email(
 @mcp.tool
 def reply_to_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
     """Reply to an email (sender only) - sends immediately"""
-    endpoint = f"/me/messages/{email_id}/reply"
+    endpoint = f"/me/messages/{_encode_id(email_id)}/reply"
     payload = {"message": {"body": {"contentType": "Text", "content": body}}}
     graph.request("POST", endpoint, account_id, json=payload)
     return {"status": "sent"}
@@ -465,7 +475,7 @@ def reply_to_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
 @mcp.tool
 def reply_all_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
     """Reply to all recipients of an email - sends immediately"""
-    endpoint = f"/me/messages/{email_id}/replyAll"
+    endpoint = f"/me/messages/{_encode_id(email_id)}/replyAll"
     payload = {"message": {"body": {"contentType": "Text", "content": body}}}
     graph.request("POST", endpoint, account_id, json=payload)
     return {"status": "sent"}
@@ -487,7 +497,7 @@ def create_reply_draft(
         reply_all: If True, reply to all recipients; if False, reply to sender only
     """
     action = "createReplyAll" if reply_all else "createReply"
-    endpoint = f"/me/messages/{email_id}/{action}"
+    endpoint = f"/me/messages/{_encode_id(email_id)}/{action}"
     result = graph.request("POST", endpoint, account_id, json={})
     if not result:
         raise ValueError("Failed to create reply draft")
@@ -518,7 +528,7 @@ def create_forward_draft(
         to: Recipient(s) for the forward
         body: Optional message to add above the forwarded content
     """
-    endpoint = f"/me/messages/{email_id}/createForward"
+    endpoint = f"/me/messages/{_encode_id(email_id)}/createForward"
     result = graph.request("POST", endpoint, account_id, json={})
     if not result:
         raise ValueError("Failed to create forward draft")
@@ -907,7 +917,7 @@ def get_attachment(
 ) -> dict[str, Any]:
     """Download email attachment to a specified file path"""
     result = graph.request(
-        "GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id
+        "GET", f"/me/messages/{_encode_id(email_id)}/attachments/{_encode_id(attachment_id)}", account_id
     )
 
     if not result:
