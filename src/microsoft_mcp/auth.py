@@ -47,22 +47,58 @@ def get_app() -> msal.PublicClientApplication:
     return app
 
 
+def _find_account(
+    accounts: list[dict], account_id: str | None
+) -> dict | None:
+    """Find an account by home_account_id or username (email).
+
+    The MCP tools expose account_id as home_account_id, but callers
+    sometimes pass the username/email instead.  Try both.
+    """
+    if not account_id:
+        return accounts[0] if accounts else None
+
+    # Try exact home_account_id match first
+    for a in accounts:
+        if a["home_account_id"] == account_id:
+            return a
+
+    # Fall back to case-insensitive username/email match
+    needle = account_id.lower()
+    for a in accounts:
+        if a.get("username", "").lower() == needle:
+            return a
+
+    return None
+
+
 def get_token(account_id: str | None = None) -> str:
     app = get_app()
 
     accounts = app.get_accounts()
-    account = None
+    account = _find_account(accounts, account_id)
 
-    if account_id:
-        account = next(
-            (a for a in accounts if a["home_account_id"] == account_id), None
+    if account is None and account_id:
+        raise Exception(
+            f"No cached account matching '{account_id}'. "
+            f"Available accounts: {[a.get('username') for a in accounts]}. "
+            f"Run authenticate_account + complete_authentication first."
         )
-    elif accounts:
-        account = accounts[0]
 
     result = app.acquire_token_silent(SCOPES, account=account)
 
     if not result:
+        if account_id:
+            # Never silently start a new device flow for API calls —
+            # that blocks the MCP server waiting for interactive input
+            # that will never arrive.
+            raise Exception(
+                f"Token refresh failed for '{account_id}'. "
+                f"The refresh token may have expired. "
+                f"Run authenticate_account + complete_authentication to re-authenticate."
+            )
+        # Only fall back to device flow when no account_id was specified
+        # (i.e. a manual/interactive caller, not an MCP tool).
         flow = app.initiate_device_flow(scopes=SCOPES)
         if "user_code" not in flow:
             raise Exception(
