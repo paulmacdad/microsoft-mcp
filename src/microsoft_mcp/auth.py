@@ -1,4 +1,5 @@
 import os
+import re
 import msal
 import pathlib as pl
 from typing import NamedTuple
@@ -7,7 +8,34 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CACHE_FILE = pl.Path.home() / ".microsoft_mcp_token_cache.json"
-SCOPES = ["https://graph.microsoft.com/.default"]
+
+# Explicit scopes, NOT ".default".
+#
+# ".default" means "issue a token for whatever this app registration has already
+# been consented to". It never names the permissions, so Azure has nothing to
+# prompt the user about: newly added delegated permissions sit on the app
+# registration forever in the "not granted" state and silently never reach the
+# token. Naming the scopes here makes the device-code sign-in show a consent
+# screen for anything not yet granted.
+#
+# Override with MICROSOFT_MCP_SCOPES (space or comma separated) if the app
+# registration's permission set changes.
+_DEFAULT_SCOPES = [
+    "https://graph.microsoft.com/Calendars.ReadWrite",
+    "https://graph.microsoft.com/Mail.ReadWrite",
+    "https://graph.microsoft.com/Mail.Send",
+    "https://graph.microsoft.com/MailboxSettings.ReadWrite",
+    "https://graph.microsoft.com/User.Read",
+    "https://graph.microsoft.com/Files.ReadWrite.All",
+    "https://graph.microsoft.com/Sites.Read.All",
+]
+
+_env_scopes = os.environ.get("MICROSOFT_MCP_SCOPES", "").strip()
+SCOPES = (
+    [s for s in re.split(r"[,\s]+", _env_scopes) if s]
+    if _env_scopes
+    else _DEFAULT_SCOPES
+)
 
 
 class Account(NamedTuple):

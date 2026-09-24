@@ -849,6 +849,111 @@ def list_files(
 
 
 @mcp.tool
+def list_shared_files(account_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """List files and folders other people have shared with you (OneDrive/SharePoint).
+
+    Returns each item's drive_id and id, which list_drive_files and
+    get_drive_file take to read inside someone else's drive.
+    """
+    items = list(
+        graph.request_paginated("/me/drive/sharedWithMe", account_id, limit=limit)
+    )
+    out = []
+    for item in items:
+        ref = item.get("remoteItem", item)
+        parent = ref.get("parentReference", {}) or {}
+        out.append(
+            {
+                "name": ref.get("name") or item.get("name"),
+                "id": ref.get("id") or item.get("id"),
+                "drive_id": parent.get("driveId"),
+                "type": "folder" if "folder" in ref else "file",
+                "size": ref.get("size", 0),
+                "modified": ref.get("lastModifiedDateTime"),
+                "shared_by": (
+                    (ref.get("shared", {}) or {}).get("owner", {}) or {}
+                ).get("user", {}).get("displayName"),
+                "web_url": ref.get("webUrl"),
+            }
+        )
+    return out
+
+
+@mcp.tool
+def list_drive_files(
+    drive_id: str,
+    account_id: str,
+    item_id: str | None = None,
+    path: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """List children of a folder in ANY drive, including one shared with you.
+
+    Give drive_id plus either item_id (from list_shared_files) or a path
+    relative to that drive's root. Omit both to list the drive root.
+    """
+    if item_id:
+        endpoint = f"/drives/{drive_id}/items/{item_id}/children"
+    elif path:
+        endpoint = f"/drives/{drive_id}/root:/{path.strip('/')}:/children"
+    else:
+        endpoint = f"/drives/{drive_id}/root/children"
+
+    params = {
+        "$top": min(limit, 200),
+        "$select": "id,name,size,lastModifiedDateTime,folder,file,@microsoft.graph.downloadUrl",
+    }
+    items = list(
+        graph.request_paginated(endpoint, account_id, params=params, limit=limit)
+    )
+    return [
+        {
+            "id": item["id"],
+            "name": item["name"],
+            "type": "folder" if "folder" in item else "file",
+            "size": item.get("size", 0),
+            "child_count": (item.get("folder", {}) or {}).get("childCount"),
+            "modified": item.get("lastModifiedDateTime"),
+            "download_url": item.get("@microsoft.graph.downloadUrl"),
+        }
+        for item in items
+    ]
+
+
+@mcp.tool
+def get_drive_file(
+    drive_id: str, item_id: str, account_id: str, download_path: str
+) -> dict[str, Any]:
+    """Download a file from ANY drive, including one shared with you."""
+    import subprocess
+
+    metadata = graph.request("GET", f"/drives/{drive_id}/items/{item_id}", account_id)
+    if not metadata:
+        raise ValueError(f"Item {item_id} not found in drive {drive_id}")
+
+    download_url = metadata.get("@microsoft.graph.downloadUrl")
+    if not download_url:
+        raise ValueError("No download URL available for this item")
+
+    pl.Path(download_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            ["curl", "-sSL", "-o", download_path, download_url],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to download file: {e.stderr.decode()}")
+
+    return {
+        "path": download_path,
+        "name": metadata.get("name", "unknown"),
+        "size_mb": round(metadata.get("size", 0) / (1024 * 1024), 2),
+        "mime_type": (metadata.get("file", {}) or {}).get("mimeType"),
+    }
+
+
+@mcp.tool
 def get_file(file_id: str, account_id: str, download_path: str) -> dict[str, Any]:
     """Download a file from OneDrive to local path"""
     import subprocess
